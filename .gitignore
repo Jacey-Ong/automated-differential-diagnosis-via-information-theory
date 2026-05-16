@@ -1,0 +1,6 @@
+\__pycache__
+*.ipynb
+*.csv
+asyncio_scratch.py 
+credentials.py
+!evidence_pathology_json_parsing.ipynb
