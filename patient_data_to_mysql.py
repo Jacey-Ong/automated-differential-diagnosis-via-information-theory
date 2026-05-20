@@ -23,7 +23,7 @@ def parse_patient_csv(train_path: str, validate_path: str, test_path: str) -> pl
             "SEX": "sex",
             "PATHOLOGY": "ground_pathology",
             "INITIAL_EVIDENCE": "initial_evidence",
-            "EVIDENCES":"evidence",
+            "EVIDENCES":"evidence_code",
             "DIFFERENTIAL_DIAGNOSIS":"diff_diag"
         }
 
@@ -47,32 +47,29 @@ def parse_patient_ddx(raw_lf: pl.LazyFrame) -> dict[str,pl.LazyFrame]:
     return {'patient_ddx': ddx}
 
 def parse_patient_ev(raw_lf: pl.LazyFrame) -> dict[str,pl.LazyFrame]:
-    raw_ev = raw_lf.select(['patient_id','evidence'])
-    raw_ev = raw_ev.with_columns(pl.col('evidence').str.replace_all("'",'"')) \
-                    .with_columns(pl.col('evidence').str.json_decode(pl.List(pl.Utf8))) \
-                    .explode('evidence')
+    raw_ev = raw_lf.select(['patient_id','evidence_code'])
+    raw_ev = raw_ev.with_columns(pl.col('evidence_code').str.replace_all("'",'"')) \
+                    .with_columns(pl.col('evidence_code').str.json_decode(pl.List(pl.Utf8))) \
+                    .explode('evidence_code')
 
-    binary_ev = raw_ev.filter(~pl.col('evidence').str.contains('_@_'))
-    binary_ev = binary_ev.with_columns(pl.lit(1).alias('value_bool'))
+    bool_ev = raw_ev.filter(~pl.col('evidence_code').str.contains('_@_'))
 
-    cat_ev = raw_ev.filter(pl.col('evidence').str.contains('_@_'),~pl.col('evidence').str.contains('V_'))
-    cat_ev = cat_ev.with_columns(pl.col('evidence').str.split(by='_@_').alias('split_evidence'))
-    cat_ev = cat_ev.with_columns([
-        pl.col("split_evidence").list.get(0).alias("evidence"),
+    num_ev = raw_ev.filter(pl.col('evidence_code').str.contains('_@_'),~pl.col('evidence_code').str.contains('V_'))
+    num_ev = num_ev.with_columns(pl.col('evidence_code').str.split(by='_@_').alias('split_evidence'))
+    num_ev = num_ev.with_columns([
+        pl.col("split_evidence").list.get(0).alias('evidence_code'),
         pl.col("split_evidence").list.get(1).alias("value_num")
     ]).drop("split_evidence")
-    cat_ev = cat_ev.cast({'value_num':pl.Int8})
+    num_ev = num_ev.cast({'value_num':pl.Int8})
 
-    multi_ev = raw_ev.filter(pl.col('evidence').str.contains('_@_'),pl.col('evidence').str.contains('V_'))
-    multi_ev = multi_ev.with_columns(pl.col('evidence').str.split(by='_@_').alias('split_evidence'))
-    multi_ev = multi_ev.with_columns([
-        pl.col("split_evidence").list.get(0).alias("evidence"),
-        pl.col("split_evidence").list.get(1).alias("value")
+    str_ev = raw_ev.filter(pl.col('evidence_code').str.contains('_@_'),pl.col('evidence_code').str.contains('V_'))
+    str_ev = str_ev.with_columns(pl.col('evidence_code').str.split(by='_@_').alias('split_evidence'))
+    str_ev = str_ev.with_columns([
+        pl.col("split_evidence").list.get(0).alias('evidence_code'),
+        pl.col("split_evidence").list.get(1).alias("value_str")
     ]).drop("split_evidence")
-    multi_ev = multi_ev.group_by(['patient_id','evidence']).agg(pl.col('value').str.join(',').alias('value_str'))
-    multi_ev = multi_ev.sort('patient_id')
     
-    return {'binary_vals': binary_ev, 'categorical_vals': cat_ev, 'multichoice_vals': multi_ev}  
+    return {'patient_evidences_bool': bool_ev, 'patient_evidences_num': num_ev, 'patient_evidences_str': str_ev}  
 
 def collect_lf_to_df(lf_dict: dict[pl.LazyFrame]) -> dict[pl.DataFrame]:
     df_dict = {}
@@ -147,43 +144,25 @@ def db_settings(cred: dict, unique_key_check: bool = True):
 def csv_to_db(cred: dict, paths: list[str]) -> dict:
     # this assumes that the Python script is in the same directory as the csv files
     for path in paths:
-        begin = time.perf_counter()
-        match path: 
-            case 'binary_vals.csv':
-                final_tbl = 'patient_evidences_tbl'
-                to_cols = 'patient_id, evidence, value_bool'
-            case 'categorical_vals.csv':
-                final_tbl = 'patient_evidences_tbl'
-                to_cols = 'patient_id, evidence, value_num'
-            case 'multichoice_vals.csv':
-                final_tbl = 'patient_evidences_tbl'
-                to_cols = 'patient_id, evidence, value_str'
-            case 'patient_info.csv':
-                final_tbl = 'patient_info_tbl'
-                to_cols = ''
-            case 'patient_ddx.csv':
-                final_tbl = 'patient_ddx_tbl'
-                to_cols = ''
-        
+        begin = time.perf_counter()        
         try:
             cnx = connect(**cred, allow_local_infile=True)
             cur = cnx.cursor()
 
             load_query = f"""
             LOAD DATA LOCAL INFILE '{path}'
-            INTO TABLE {final_tbl}
+            INTO TABLE {path[:-4]}
             FIELDS TERMINATED BY ','
             ENCLOSED BY '"'
             LINES TERMINATED BY '\\n'
             IGNORE 1 ROWS
-            ({to_cols})
             """
 
             cur.execute(load_query)
             cnx.commit()
 
             end = time.perf_counter()
-            print(f"Loaded {final_tbl} to database in {end-begin} seconds.")
+            print(f"Loaded {path} to database in {end-begin} seconds.")
 
             cur.close()
             cnx.close()
