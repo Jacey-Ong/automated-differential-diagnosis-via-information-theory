@@ -77,7 +77,7 @@ if __name__ == "__main__":
     ev_val_df = ev_val_df.with_columns(is_default = (pl.col('default_value')==pl.col('possible_values')))
     ev_val_df = ev_val_df.select(pl.exclude('default_value'))
 
-    ev_val_bool = ev_val_df.filter(evidence_type = 'binary').select('evidence_code')
+    ev_val_bool = ev_val_df.filter(evidence_type = 'binary').select('evidence_code').unique()
     ev_val_bool_end = time.perf_counter()
     print(f'Created evidences_value_bool table in {ev_val_bool_end - path_ev_end} seconds.')
 
@@ -126,7 +126,7 @@ if __name__ == "__main__":
     )
 
     evidences_df.write_database(
-        table_name='pathology_evidences',
+        table_name='evidences',
         connection = engine,
         if_table_exists='append',
         engine = 'sqlalchemy'
