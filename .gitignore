@@ -3,3 +3,4 @@
 *.csv
 asyncio_scratch.py 
 credentials.py
+*.parquet
